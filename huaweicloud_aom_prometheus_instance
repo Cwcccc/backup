@@ -1,0 +1,128 @@
+package aom
+
+import (
+	"context"
+	"github.com/hashicorp/go-multierror"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
+	aom "github.com/huaweicloud/huaweicloud-sdk-go-v3/services/aom/v2/model"
+	"github.com/huaweicloud/terraform-provider-huaweicloud/huaweicloud/common"
+	"github.com/huaweicloud/terraform-provider-huaweicloud/huaweicloud/config"
+	"github.com/huaweicloud/terraform-provider-huaweicloud/huaweicloud/utils/fmtp"
+	"log"
+	"regexp"
+	"time"
+)
+
+func ResourcePrometheusInstance() *schema.Resource {
+	return &schema.Resource{
+		//CreateContext: resourceAlarmRuleCreate,
+		ReadContext: resourcePrometheusInstanceRead,
+		//UpdateContext: resourceAlarmRuleUpdate,
+		//DeleteContext: resourceAlarmRuleDelete,
+		Importer: &schema.ResourceImporter{
+			StateContext: schema.ImportStatePassthroughContext,
+		},
+
+		Timeouts: &schema.ResourceTimeout{
+			Create: schema.DefaultTimeout(5 * time.Minute),
+			Update: schema.DefaultTimeout(5 * time.Minute),
+			Delete: schema.DefaultTimeout(5 * time.Minute),
+		},
+
+		Schema: map[string]*schema.Schema{
+			"region": {
+				Type:     schema.TypeString,
+				Optional: true,
+				Computed: true,
+				ForceNew: true,
+			},
+			"project_id": {
+				Type:     schema.TypeString,
+				Required: true,
+				ForceNew: true,
+				ValidateFunc: validation.All(
+					validation.StringLenBetween(1, 100),
+					validation.StringMatch(regexp.MustCompile(
+						"^[\u4e00-\u9fa5A-Za-z0-9]([\u4e00-\u9fa5-_A-Za-z0-9]*[\u4e00-\u9fa5A-Za-z0-9])?$"),
+						"The name can only consist of letters, digits, underscores (_),"+
+							" hyphens (-) and chinese characters, and it must start and end with letters,"+
+							" digits or chinese characters."),
+				),
+			},
+			"ces_metric_namespaces":{
+				Type: schema.TypeList,
+				Elem: schema.TypeString,
+			},
+			"action": {
+				Type:     schema.TypeString,
+				ForceNew: true,
+			},
+		},
+	}
+}
+
+func resourcePrometheusInstanceRead(_ context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
+	config := meta.(*config.Config)
+	client, err := config.HcAomV2Client(config.GetRegion(d))
+	if err != nil {
+		return fmtp.DiagErrorf("error creating AOM client: %s", err)
+	}
+
+	req := &aom.prometheusInstanceRequest{
+		project_id: d.Get("project_id"),
+		action:     d.Get("action"),
+	}
+	response, err := client.ShowPrometheusInstances(req)
+	if err != nil {
+		return common.CheckDeletedDiag(d, err, "error retrieving AOM alarm rule")
+	}
+
+	prometheusInstances := *response.CesMetricNamespaces
+
+	log.Printf("[DEBUG] Retrieved AOM prometheus instances %#v", prometheusInstances)
+
+	mErr:=multierror.Append(nil,d.Set("ces_metric_namespaces",prometheusInstances))
+
+	if err := mErr.ErrorOrNil(); err != nil {
+		return fmtp.DiagErrorf("error setting AOM prometheus instance fields: %w", err)
+	}
+
+	return nil
+}
+
+func resourcePrometheusInstancepatch(_ context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
+	config := meta.(*config.Config)
+	client, err := config.HcAomV2Client(config.GetRegion(d))
+	if err != nil {
+		return fmtp.DiagErrorf("error creating AOM client: %s", err)
+	}
+
+	patchOpts := &aom.prometheusInstanceparams{
+		prom_for_cloud_service:d.Get("prom_for_cloud_service"),
+	}
+
+	req :=&aom.prometheusInstanceRequest{
+		project_id: d.Get("project_id"),
+		action:     d.Get("action"),
+		body:patchOpts,
+	}
+
+	response, err := client.PatchPrometheusInstance(req)
+	if err != nil {
+		return common.CheckDeletedDiag(d, err, "error retrieving AOM alarm rule")
+	}
+
+	prometheusInstances := *response.CesMetricNamespaces
+
+	log.Printf("[DEBUG] Retrieved AOM prometheus instances %#v", prometheusInstances)
+
+	mErr:=multierror.Append(nil,d.Set("ces_metric_namespaces",prometheusInstances))
+
+	if err := mErr.ErrorOrNil(); err != nil {
+		return fmtp.DiagErrorf("error setting AOM prometheus instance fields: %w", err)
+	}
+
+	return nil
+}
