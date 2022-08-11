@@ -1,0 +1,385 @@
+package aom
+
+import (
+	"context"
+	"encoding/json"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
+	aom "github.com/huaweicloud/huaweicloud-sdk-go-v3/services/aom/v2/model"
+	"github.com/huaweicloud/terraform-provider-huaweicloud/huaweicloud/config"
+	"github.com/huaweicloud/terraform-provider-huaweicloud/huaweicloud/utils"
+	"github.com/huaweicloud/terraform-provider-huaweicloud/huaweicloud/utils/fmtp"
+	"log"
+	"regexp"
+	"strconv"
+	"time"
+)
+
+func ResourceAlarmPolicy() *schema.Resource {
+	return &schema.Resource{
+		CreateContext: resourceAlarmPolicyCreate,
+		ReadContext:   resourceAlarmPolicyRead,
+		//UpdateContext: resourceAlarmRuleUpdate,
+		//DeleteContext: resourceAlarmRuleDelete,
+		Importer: &schema.ResourceImporter{
+			StateContext: schema.ImportStatePassthroughContext,
+		},
+		Timeouts: &schema.ResourceTimeout{
+			Create: schema.DefaultTimeout(5 * time.Minute),
+			Update: schema.DefaultTimeout(5 * time.Minute),
+			Delete: schema.DefaultTimeout(5 * time.Minute),
+		},
+		Schema: map[string]*schema.Schema{
+			"region": {
+				Type:     schema.TypeString,
+				Required: true,
+				Computed: true,
+			},
+			"project_id": {
+				Type:     schema.TypeString,
+				Required: true,
+				ValidateFunc: validation.All(
+					validation.StringLenBetween(31, 33),
+					validation.StringMatch(regexp.MustCompile("^[a-z0-9]?$"), "The project_id can only consist of letters, digits."),
+				),
+			},
+			"action_id": {
+				Type:     schema.TypeString,
+				Required: true,
+				Computed: true,
+			},
+			"alarm_rule_name": {
+				Type:     schema.TypeString,
+				Required: true,
+				Computed: true,
+			},
+			"enterprise_project_id": {
+				Type:     schema.TypeString,
+				Required: true,
+				Computed: true,
+			},
+			"alarm_rule_description": {
+				Type:     schema.TypeString,
+				Optional: true,
+				Computed: true,
+			},
+			"alarm_rule_enable": {
+				Type:     schema.TypeBool,
+				Optional: true,
+				Computed: true,
+			},
+			"alarm_rule_status": {
+				Type:     schema.TypeString,
+				Optional: true,
+				Computed: true,
+			},
+			"alarm_rule_type": {
+				Type:     schema.TypeString,
+				Required: true,
+				ForceNew: true,
+			},
+			"metric_alarm_spec":   schemaMetricAlarmSpe(),
+			"event_alarm_spec":    schemeEventAlarmSpec(),
+			"alarm_notifications": schemeAlarmNotifications(),
+		},
+	}
+}
+
+func schemaMetricAlarmSpe() *schema.Schema {
+	return &schema.Schema{
+		Type:     schema.TypeSet,
+		Optional: true,
+		Elem: &schema.Resource{
+			Schema: map[string]*schema.Schema{
+				"monitor_type": {
+					Type:     schema.TypeString,
+					Required: true,
+				},
+				"resource_kind": {
+					Type:     schema.TypeString,
+					Optional: true,
+				},
+				"metric_kind": {
+					Type:     schema.TypeString,
+					Optional: true,
+				},
+				"alarm_rule_template_bind_enable": {
+					Type:     schema.TypeBool,
+					Optional: true,
+				},
+				"alarm_rule_template_id": {
+					Type:     schema.TypeString,
+					Optional: true,
+				},
+				"no_data_conditions": schemeNoDataConditions(),
+				"alarm_tags":         schemeAlarmTags(),
+				"trigger_conditions": schemeTriggerConditions(),
+				"monitor_objects":    schemeMonitorObjects(),
+				"recovery_conditions": {
+					Type:     schema.TypeList,
+					Optional: true,
+					Elem: &schema.Resource{
+						Schema: map[string]*schema.Schema{
+							"recovery_timeframe": {
+								Type:     schema.TypeString,
+								Optional: true,
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+func schemeEventAlarmSpec() *schema.Schema {
+	return &schema.Schema{
+		Type:     schema.TypeSet,
+		Optional: true,
+		Elem: &schema.Resource{
+			Schema: map[string]*schema.Schema{
+				"event_source": {
+					Type:     schema.TypeString,
+					Optional: true,
+				},
+				"monitor_objects":    schemeMonitorObjects(),
+				"no_data_conditions": schemeNoDataConditions(),
+				"alarm_tags":         schemeAlarmTags(),
+			},
+		},
+	}
+}
+
+func schemeNoDataConditions() *schema.Schema {
+	return &schema.Schema{
+		Type:     schema.TypeList,
+		Optional: true,
+		Elem: &schema.Resource{
+			Schema: map[string]*schema.Schema{
+				"no_data_timeframe": {
+					Type:     schema.TypeString,
+					Optional: true,
+				},
+				"no_data_alert_state": {
+					Type:     schema.TypeString,
+					Optional: true,
+				},
+				"notify_no_data": {
+					Type:     schema.TypeBool,
+					Optional: true,
+				},
+			},
+		},
+	}
+}
+
+func schemeAlarmTags() *schema.Schema {
+	return &schema.Schema{
+		Type:     schema.TypeList,
+		Optional: true,
+		Elem: &schema.Resource{
+			Schema: map[string]*schema.Schema{
+				"auto_tags": {
+					Type:     schema.TypeList,
+					Optional: true,
+					Elem:     schema.TypeString,
+				},
+				"custom_tags": {
+					Type:     schema.TypeList,
+					Optional: true,
+					Elem:     schema.TypeString,
+				},
+				"custom_annotations": {
+					Type:     schema.TypeList,
+					Optional: true,
+					Elem:     schema.TypeString,
+				},
+			},
+		},
+	}
+}
+
+func schemeTriggerConditions() *schema.Schema {
+	return &schema.Schema{
+		Type:     schema.TypeList,
+		Optional: true,
+		Elem: &schema.Resource{
+			Schema: map[string]*schema.Schema{
+				"metric_query_mode": {
+					Type:     schema.TypeString,
+					Optional: true,
+				},
+				"metric_namespace": {
+					Type:     schema.TypeString,
+					Optional: true,
+				},
+				"metric_name": {
+					Type:     schema.TypeString,
+					Optional: true,
+				},
+				"metric_labels": {
+					Type:     schema.TypeList,
+					Optional: true,
+					Elem:     schema.TypeString,
+				},
+				"promql": {
+					Type:     schema.TypeString,
+					Optional: true,
+				},
+				"trigger_times": {
+					Type:     schema.TypeString,
+					Optional: true,
+				},
+				"trigger_interval": {
+					Type:     schema.TypeString,
+					Optional: true,
+				},
+				"aggregation_type": {
+					Type:     schema.TypeString,
+					Optional: true,
+				},
+				"aggregation_window": {
+					Type:     schema.TypeString,
+					Optional: true,
+				},
+				"operator": {
+					Type:     schema.TypeString,
+					Optional: true,
+				},
+				"thresholds": {
+					Type:     schema.TypeSet,
+					Optional: true,
+					Elem: &schema.Resource{
+						Schema: map[string]*schema.Schema{
+							"critical": {
+								Type:     schema.TypeInt,
+								Optional: true,
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+func schemeMonitorObjects() *schema.Schema {
+	return &schema.Schema{
+		Type:     schema.TypeList,
+		Optional: true,
+		Elem: &schema.Resource{
+			Schema: map[string]*schema.Schema{
+				"nodeIP": {
+					Type:     schema.TypeString,
+					Optional: true,
+				},
+				"hostID": {
+					Type:     schema.TypeString,
+					Optional: true,
+				},
+			},
+		},
+	}
+}
+
+func schemeAlarmNotifications() *schema.Schema {
+	return &schema.Schema{
+		Type:     schema.TypeSet,
+		Optional: true,
+		Elem: &schema.Resource{
+			Schema: map[string]*schema.Schema{
+				"notification_type": {
+					Type:     schema.TypeString,
+					Optional: true,
+				},
+				"route_group_enable": {
+					Type:     schema.TypeBool,
+					Optional: true,
+				},
+				"route_group_rule": {
+					Type:     schema.TypeString,
+					Optional: true,
+				},
+				"inhibit_enable": {
+					Type:     schema.TypeBool,
+					Optional: true,
+				},
+				"inhibit_rule": {
+					Type:     schema.TypeString,
+					Optional: true,
+				},
+				"notification_enable": {
+					Type:     schema.TypeBool,
+					Optional: true,
+				},
+				"bind_notification_rule_id": {
+					Type:     schema.TypeString,
+					Optional: true,
+				},
+				"notify_resolved": {
+					Type:     schema.TypeBool,
+					Optional: true,
+				},
+			},
+		},
+	}
+}
+
+func resourceAlarmPolicyCreate(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
+	config := meta.(*config.Config)
+	client, err := config.HcAomV2Client(config.GetRegion(d))
+	if err != nil {
+		return fmtp.DiagErrorf("error creating AOM client: %s", err)
+	}
+
+	createOpts := aom.AlarmRuleParam{
+		AlarmRuleName:    d.Get("alarm_rule_name").(string),
+		AlarmDescription: utils.String(d.Get("alarm_rule_description").(string)),
+		AlarmLevel:       int32(d.Get("alarm_level").(int)),
+		IdTurnOn:         utils.Bool(true),
+		AlarmActions:     buildActionOpts(d.Get("alarm_actions").([]interface{})),
+	}
+
+	log.Printf("[DEBUG] Create %s Options: %#v", createOpts.AlarmRuleName, createOpts)
+
+	createReq := aom.AddAlarmRuleRequest{
+		Body: &createOpts,
+	}
+	response, err := client.AddAlarmRule(&createReq)
+	if err != nil {
+		return diag.Errorf("error creating AOM alarm rule %s: %s", createOpts.AlarmRuleName, err)
+	}
+
+	d.SetId(strconv.FormatInt(*response.AlarmRuleId, 10))
+
+	return resourceAlarmRuleRead(ctx, d, meta)
+}
+
+func resourceAlarmPolicyRead(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
+	return nil
+}
+
+func buildMetricAlarmSpec(raw interface{}) *MetircAlarmSpec {
+	mas := &MetircAlarmSpec{}
+	b, err := json.Marshal(raw)
+	if err != nil {
+		return mas
+	}
+	json.Unmarshal(b, mas)
+	return mas
+}
+
+func buildEventAlarmSpec(raw interface{}) *EventAlarmSpec {
+	mas := &EventAlarmSpec{}
+	b, err := json.Marshal(raw)
+	if err != nil {
+		return nil
+	}
+	json.Unmarshal(b, mas)
+	return mas
+}
+
+func buildAlarmNotifications(raw interface{}) *AlarmNotifications {
+	return nil
+}
